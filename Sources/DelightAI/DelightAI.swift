@@ -52,41 +52,28 @@ public class DelightAI {
 }
 
 extension DelightAI {
-    /// send a Chat request to the Delight API and integrate sending and polling into one function.
-    /// - Parameteres:
-    ///     - text: textual message
-    ///     - webhookId: specific Id of the agent
-    public func sendChat(text: String, webhookId: String, userId: String, username: String, messageId: String? = nil) async -> Result<DelightPollingResponse, DelightAIError> {
-        let result = await send(text: text, webhookId: webhookId, userId: userId, username: username, messageId: messageId)
-        let attemptCount = 30
-        switch result {
-        case .success(let success):
-            let resultPolling = await polling(pollingUrl: self.config.baseURL + success.poll, attempt: attemptCount)
-            switch resultPolling {
-                case .success(let pollingRepsonse):
-                    return .success(pollingRepsonse)
-                case .failure(let error):
-                    return .failure(error)
-            }
-        case .failure(let error):
-            return .failure(.requestError(error))
-        }
-    }
-    
     /// Send a Chat request to the Delight API
     /// - Parameters
     ///     - text: textual message
     ///     - webhookId: specific Id of the agent
-    private func send(text: String, webhookId: String, userId: String, username: String, messageId: String?) async -> Result<DelightResponse, DelightAIError> {
+    ///     - userId: sender Id
+    ///     - username: sender name
+    ///     - completionHandler: Returns a DelightResponse
+    public func sendChat(text: String,
+                          webhookId: String,
+                          userId: String,
+                          username: String,
+                          messageId: String? = nil,
+                          completionHandler: @escaping (Result<DelightResponse, DelightAIError>) -> Void) {
         guard let url = URL(string: "\(self.config.baseURL)/webhook/webwidget/\(webhookId)/") else {
-            return .failure(.invalidURL)
+            return completionHandler(.failure(.invalidURL))
         }
         var request = URLRequest(url: url)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpMethod = "POST"
         let timestamp = Int(NSDate().timeIntervalSince1970 * 1000)
-    
-        let message = DelightRequest(
+        
+        let body = DelightRequest(
             message: DelightRequest.Message(
                 message_id: messageId ?? "Wi-iOS-" + UUID().uuidString,
                 from: DelightRequest.Message.From(
@@ -99,42 +86,107 @@ extension DelightAI {
             )
         )
         
-        do {
-            let delightRequest = try! JSONEncoder().encode(message)
-            request.httpBody = delightRequest
-            let (data, U) = try await URLSession.shared.data(for: request)
-            let activity = try JSONDecoder().decode(DelightResponse.self, from: data)
-            return .success(activity)
-        } catch let error {
-            return .failure(.requestError(error))
+        if let encoded = try? JSONEncoder().encode(body) {
+            request.httpBody = encoded
+        }
+        
+        makeRequest(request: request) { result in
+            switch result {
+            case .success(let success):
+                if let chatErr = try? JSONDecoder().decode(ChatError.self, from: success) as ChatError {
+                    completionHandler(.failure(.chatError(error: chatErr.error)))
+                    return
+                }
+                
+                do {
+                    let res = try JSONDecoder().decode(DelightResponse.self, from: success)
+                    completionHandler(.success(res))
+                } catch {
+                    completionHandler(.failure(.decodingError(error)))
+                }
+                
+            case .failure(let failure):
+                completionHandler(.failure(.requestError(failure)))
+            }
+            
         }
     }
     
     /// send polling request to the Delight API
     /// - Parameters:
     ///     - pollingUrl: polling URL for requests to the Delight API
-    ///     - attempt: the number of retries for polling requests to the Delight API
-    private func polling(pollingUrl: String, attempt: Int = 60) async -> Result<DelightPollingResponse, DelightAIError> {
-        if (attempt == 0) {
-            return .failure(DelightAIError.attemptMore)
-        }
-        guard let url = URL(string: pollingUrl) else {
-            return .failure(.invalidURL)
+    ///     - completionHandler: Returns a DelightPollingResponse
+    public func polling(pollingUrl: String,
+                 completionHandler: @escaping (Result<DelightPollingResponse, DelightAIError>) -> Void) {
+        guard let url = URL(string: self.config.baseURL + pollingUrl) else {
+            return completionHandler(.failure(.invalidURL))
         }
         
-        do {
-            let (data, _) = try await URLSession.shared.data(from: url)
-
-            let response = try JSONDecoder().decode(DelightPollingResponse.self, from: data)
-
-            if (response.completed) {
-                return .success(response)
+        var request = URLRequest(url: url)
+        
+        makeRequest(request: request) { result in
+            switch result {
+            case .success(let success):
+                do {
+                    let res = try JSONDecoder().decode(DelightPollingResponse.self, from: success)
+                    completionHandler(.success(res))
+                } catch {
+                    completionHandler(.failure(.decodingError(error)))
+                }
+            case .failure(let failure):
+                completionHandler(.failure(.requestError(failure)))
             }
-            // wait for 1 second for each request
-            try await Task.sleep(nanoseconds: 1_000_000_000)
-            return await polling(pollingUrl: pollingUrl, attempt: attempt - 1)
-        } catch let error {
-            return .failure(.requestError(error))
         }
     }
+    
+    private func makeRequest(request: URLRequest, completionHandler: @escaping (Result<Data, Error>) -> Void) {
+        let session = config.session
+        let task = session.dataTask(with: request) { (data, response, error) in
+            if let error = error {
+                completionHandler(.failure(error))
+            } else if let data = data {
+                completionHandler(.success(data))
+            }
+        }
+        
+        task.resume()
+    }
 }
+
+extension DelightAI {
+    /// Send a Chat request to the Delight API
+    /// - Parameters
+    ///     - text: textual message
+    ///     - webhookId: specific Id of the agent
+    ///     - userId: sender Id
+    ///     - username: sender name
+    /// - Returns: Returns a DelightResponse
+    @available(swift 5.5)
+    @available(macOS 10.15, iOS 13, watchOS 6, tvOS 13, *)
+    public func sendChat(text: String,
+                          webhookId: String,
+                          userId: String,
+                          username: String,
+                          messageId: String? = nil) async throws -> DelightResponse {
+        return try await withCheckedThrowingContinuation { continuation in
+            sendChat(text: text, webhookId: webhookId, userId: userId, username: username) { result in
+                        continuation.resume(with: result)
+                    }
+                }
+    }
+    
+    /// send polling request to the Delight API
+    /// - Parameters:
+    ///     - pollingUrl: polling URL for requests to the Delight API
+    /// - Returns: Returns a DelightPollingResponse
+    @available(swift 5.5)
+    @available(macOS 10.15, iOS 13, watchOS 6, tvOS 13, *)
+    public func polling(pollingUrl: String) async throws -> DelightPollingResponse {
+        return try await withCheckedThrowingContinuation { continuation in
+            polling(pollingUrl: pollingUrl) { result in
+                        continuation.resume(with: result)
+                    }
+                }
+    }
+}
+
