@@ -8,6 +8,11 @@ Xcode project, select File > Add Package Dependency and enter its repository URL
 
 https://github.com/HungryFoolishHappy/DelightAI-iOS.git
 
+## Demo
+
+https://github.com/user-attachments/assets/3a015f71-3de5-418d-816d-8865226b4f97
+
+
 ## Usage Example
 
 Import the framework in your project:
