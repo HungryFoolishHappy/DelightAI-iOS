@@ -1,17 +1,17 @@
 # DelightAI-iOS
 
-## Installation 💻
+## Installation ⚙️
 
 ### Add a package dependency
 
 In your Xcode project, select File > Add Package Dependency and enter this repository URL: https://github.com/HungryFoolishHappy/DelightAI-iOS.git . 
 
-## Demo
+## Demo 🎥
 
 https://github.com/user-attachments/assets/3a015f71-3de5-418d-816d-8865226b4f97
 
 
-## Usage Example
+## Usage Example 📚
 
 Import and init the framework in your project:
 
