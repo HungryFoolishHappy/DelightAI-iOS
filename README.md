@@ -53,3 +53,7 @@ do {
     // ...
 }
 ```
+
+## Try the Demo App 🚀 
+
+You can try the demo app by cloning it from another repository: [DelightAI-iOS-Demo](https://github.com/HungryFoolishHappy/DelightAI-iOS-Demo).
